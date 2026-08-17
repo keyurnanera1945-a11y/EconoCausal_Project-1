@@ -1,0 +1,40 @@
+# Pipeline Configuration File
+
+dataset:
+  raw_data_path: "data/raw/criteo-uplift-v2.1.csv"
+  processed_dir: "data/processed"
+
+features:
+  feature_cols:
+    - "f0"
+    - "f1"
+    - "f2"
+    - "f3"
+    - "f4"
+    - "f5"
+    - "f6"
+    - "f7"
+    - "f8"
+    - "f9"
+    - "f10"
+    - "f11"
+  treatment_col: "treatment"
+  outcome_col: "conversion"
+  secondary_outcomes:
+    - "visit"
+    - "exposure"
+
+preprocessing:
+  imputation:
+    cols:
+      - "f10"
+      - "f11"
+    strategy: "median"
+  split:
+    test_size: 0.20
+    random_state: 123
+
+outputs:
+  results_dir: "results"
+  tables_dir: "results/tables"
+  summary_file: "results/tables/dataset_summary.csv"
