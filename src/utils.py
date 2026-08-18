@@ -7,14 +7,21 @@ from src.config import PipelineConfig
 
 def compute_group_metrics(df: pd.DataFrame, treatment_col: str, outcome_col: str) -> Dict[str, float]:
     """Calculate conversion rates across treatment and control groups."""
-    treatment_rate = df.loc[df[treatment_col] == 1, outcome_col].mean()
-    control_rate = df.loc[df[treatment_col] == 0, outcome_col].mean()
-    observed_diff = treatment_rate - control_rate
+    t_subset = df.loc[df[treatment_col] == 1, outcome_col]
+    c_subset = df.loc[df[treatment_col] == 0, outcome_col]
+
+    treatment_rate = float(t_subset.mean()) if len(t_subset) > 0 else float("nan")
+    control_rate = float(c_subset.mean()) if len(c_subset) > 0 else float("nan")
+    
+    if not pd.isna(treatment_rate) and not pd.isna(control_rate):
+        observed_diff = treatment_rate - control_rate
+    else:
+        observed_diff = float("nan")
 
     return {
-        "treatment_conversion_rate": float(treatment_rate),
-        "control_conversion_rate": float(control_rate),
-        "observed_difference": float(observed_diff)
+        "treatment_conversion_rate": treatment_rate,
+        "control_conversion_rate": control_rate,
+        "observed_difference": observed_diff
     }
 
 

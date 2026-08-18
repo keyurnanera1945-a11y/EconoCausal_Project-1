@@ -35,10 +35,15 @@ class DataPipeline:
         # 4. Export Table Summary
         save_summary_table(summary_df, self.config.summary_file)
 
+        t_rate_str = f"{group_metrics['treatment_conversion_rate']:.6f}" if not pd.isna(group_metrics['treatment_conversion_rate']) else "NaN"
+        c_rate_str = f"{group_metrics['control_conversion_rate']:.6f}" if not pd.isna(group_metrics['control_conversion_rate']) else "NaN (No control group)"
+        lift_str = f"{group_metrics['observed_difference']:.6f}" if not pd.isna(group_metrics['observed_difference']) else "NaN"
+
         print("[DataPipeline] Pipeline execution complete.")
-        print(f"               Treatment Conversion Rate: {group_metrics['treatment_conversion_rate']:.6f}")
-        print(f"               Control Conversion Rate:   {group_metrics['control_conversion_rate']:.6f}")
-        print(f"               Observed Lift:            {group_metrics['observed_difference']:.6f}")
+        print(f"               Treatment Conversion Rate: {t_rate_str}")
+        print(f"               Control Conversion Rate:   {c_rate_str}")
+        print(f"               Observed Lift:            {lift_str}")
+
 
         processed_data["summary_df"] = summary_df
         processed_data["group_metrics"] = group_metrics

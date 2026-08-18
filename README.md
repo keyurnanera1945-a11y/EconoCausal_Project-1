@@ -23,7 +23,7 @@ A modular, production-ready Python pipeline for data loading, preprocessing, fea
 │   ├── __init__.py
 │   ├── config.py                       # Config loader & path management
 │   ├── data_loader.py                  # Ingestion & basic inspection
-│   ├── preprocessing.py                # Median imputation, causal matrix isolation, train/test split
+│   ├── preprocessing.py                # Duplicate removal, missing row dropping, causal matrix isolation, train/test split
 │   ├── utils.py                        # Causal metrics & table export
 │   └── pipeline.py                     # Pipeline orchestrator
 ├── main.py                             # Command-Line Interface runner
@@ -81,5 +81,5 @@ Y_train, Y_test = results["Y_train"], results["Y_test"]
 
 Key parameters can be modified without altering python code:
 - **`features`**: List of numerical features (`f0` - `f11`), treatment column (`treatment`), outcome column (`conversion`).
-- **`preprocessing.imputation`**: Imputation columns (`f10`, `f11`) and strategy (`median` / `mean`).
-- **`preprocessing.split`**: Train/Test ratio (`test_size: 0.20`) and random state (`123`).
+- **`preprocessing`**: Drop missing rows (`drop_missing: true`), remove duplicates (`remove_duplicates: true`).
+- **`preprocessing.split`**: Train/Test ratio (`test_size: 0.20`) and random state (`42`).

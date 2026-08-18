@@ -19,17 +19,26 @@ class DataLoader:
         for i in range(12):
             data[f"f{i}"] = np.random.normal(loc=0.0, scale=1.0, size=num_samples)
         
-        # Add 1 missing value in f10 and f11 to test imputation logic
+        # Add 1 missing value in f9, f10, f11, treatment, conversion to mirror dataset behavior
+        data["f9"][0] = np.nan
         data["f10"][0] = np.nan
-        data["f11"][1] = np.nan
-
+        data["f11"][0] = np.nan
         data["treatment"] = np.random.binomial(n=1, p=0.85, size=num_samples)
-        conversion_prob = 0.003 + 0.005 * data["treatment"] + 0.001 * np.abs(data["f0"])
-        data["conversion"] = np.random.binomial(n=1, p=np.clip(conversion_prob, 0, 1), size=num_samples)
-        data["visit"] = np.random.binomial(n=1, p=np.clip(conversion_prob * 10, 0, 1), size=num_samples)
-        data["exposure"] = data["treatment"]
+        data["treatment"] = data["treatment"].astype(float)
+        data["treatment"][0] = np.nan
+
+        conversion_prob = 0.003 + 0.005 * np.nan_to_num(data["treatment"]) + 0.001 * np.abs(data["f0"])
+        data["conversion"] = np.random.binomial(n=1, p=np.clip(conversion_prob, 0, 1), size=num_samples).astype(float)
+        data["conversion"][0] = np.nan
+
+        data["visit"] = np.random.binomial(n=1, p=np.clip(conversion_prob * 10, 0, 1), size=num_samples).astype(float)
+        data["visit"][0] = np.nan
+        data["exposure"] = data["treatment"].copy()
 
         df = pd.DataFrame(data)
+        # Duplicate a few rows to simulate duplicate records found in notebook EDA
+        duplicates = df.iloc[1:6].copy()
+        df = pd.concat([df, duplicates], ignore_index=True)
         return df
 
     def load_data(self) -> pd.DataFrame:
