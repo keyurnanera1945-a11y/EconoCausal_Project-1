@@ -1,3 +1,30 @@
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Node & Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Do not upload private notes if specified
+do_not_upload/
+
+#Data
+data/
+
 # Python
 __pycache__/
 *.py[cod]
