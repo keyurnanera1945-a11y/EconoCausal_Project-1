@@ -198,11 +198,10 @@ def compute_qini_curve(df: pd.DataFrame, ite_col: str = "ite"):
 # ---------------------------------------------------------------------
 def optimize_allocation(df: pd.DataFrame, budget: float, cost_per_treatment: float = 10.0):
     """
-    Greedy/LP-style allocation: rank customers by ITE per dollar spent,
+    Greedy allocation: rank customers by ITE per dollar spent,
     allocate discount budget to highest-uplift customers first until
-    budget is exhausted. (Simple, explainable version of the SciPy
-    linear program — can be swapped for scipy.optimize.linprog for a
-    strict LP formulation later.)
+    budget is exhausted. Simple, explainable baseline for comparison
+    against the strict SciPy LP formulation in optimize_allocation_lp().
     """
     d = df.copy()
     d["ite_per_dollar"] = d["ite"] / cost_per_treatment
@@ -224,8 +223,201 @@ def optimize_allocation(df: pd.DataFrame, budget: float, cost_per_treatment: flo
     return d, summary
 
 
+def optimize_allocation_lp(df: pd.DataFrame, budget: float, cost_per_treatment: float = 10.0):
+    """
+    Strict LP formulation using scipy.optimize.linprog.
+
+    Problem:
+        maximize  sum(ITE_i * x_i)          <- maximize total expected uplift
+        subject to:
+            sum(cost * x_i) <= budget        <- total spend within budget
+            0 <= x_i <= 1  for all i         <- fractional/binary relaxation
+
+    Since linprog only MINIMIZES, we negate the ITE objective:
+        minimize  -sum(ITE_i * x_i)
+
+    For a homogeneous cost (all customers cost the same), the LP relaxation
+    solution is always integral (0 or 1) — the LP and the greedy should
+    agree exactly, which is confirmed by the comparison printout below.
+    """
+    from scipy.optimize import linprog
+
+    ite_values = df["ite"].values
+    n = len(ite_values)
+
+    # Objective: minimize -ITE (equivalent to maximize ITE)
+    c = -ite_values
+
+    # Inequality constraint: cost_per_treatment * sum(x_i) <= budget
+    # scipy form: A_ub @ x <= b_ub
+    A_ub = np.ones((1, n)) * cost_per_treatment
+    b_ub = np.array([budget])
+
+    # Variable bounds: 0 <= x_i <= 1 per customer
+    bounds = [(0, 1)] * n
+
+    result = linprog(
+        c,
+        A_ub=A_ub,
+        b_ub=b_ub,
+        bounds=bounds,
+        method="highs",  # HiGHS solver — fast and reliable for large LPs
+    )
+
+    if not result.success:
+        raise RuntimeError(f"LP did not converge: {result.message}")
+
+    x = result.x  # allocation weights in [0, 1]
+
+    d = df.copy()
+    d["lp_weight"] = x
+    # Threshold at 0.5 to recover binary decisions from the relaxed LP
+    d["allocated"] = (x >= 0.5).astype(int)
+
+    n_allocated = d["allocated"].sum()
+    total_spend = n_allocated * cost_per_treatment
+    expected_gain = d.loc[d["allocated"] == 1, "ite"].sum()
+
+    summary = {
+        "budget": budget,
+        "customers_targeted": int(n_allocated),
+        "total_spend": total_spend,
+        "expected_incremental_conversions": expected_gain,
+    }
+    return d, summary
+
 # ---------------------------------------------------------------------
-# 9. FULL PIPELINE RUNNER
+# 10. TIERED DISCOUNT OPTIMIZATION (SciPy LP with 3 tiers)
+# ---------------------------------------------------------------------
+# Discount tier assumptions (stated explicitly for reproducibility):
+#   Tier 1 — $5  "low"    discount: ITE multiplier = 1.0x  (base, no uplift boost)
+#   Tier 2 — $10 "medium" discount: ITE multiplier = 1.3x  (moderate incentive bump)
+#   Tier 3 — $20 "high"   discount: ITE multiplier = 1.6x  (strong incentive, high cost)
+# Rationale: higher discount signals stronger commitment; customers respond
+# proportionally. Multipliers are conservative estimates of behavioral response.
+TIERS = [
+    {"name": "low",    "cost":  5.0, "ite_multiplier": 1.0},
+    {"name": "medium", "cost": 10.0, "ite_multiplier": 1.3},
+    {"name": "high",   "cost": 20.0, "ite_multiplier": 1.6},
+]
+
+
+def optimize_allocation_tiered(
+    df: pd.DataFrame,
+    budget: float,
+    tiers: list = None,
+):
+    """
+    LP optimization with multiple discount tiers per customer.
+
+    Decision variables:  x[i,t] in [0,1] — assign customer i tier t
+    Objective:           maximize  sum_i sum_t (ITE_i * mult_t * x[i,t])
+    Constraints:
+        sum_i sum_t (cost_t * x[i,t]) <= budget   (budget cap)
+        sum_t x[i,t]  <= 1  for each i             (each customer gets at most 1 tier)
+        x[i,t] in [0,1]                            (fractional relaxation)
+
+    Since linprog minimizes, we negate the objective.
+    The LP relaxation with these constraints will assign at most one tier per
+    customer (the most cost-efficient one given remaining budget) and will
+    naturally prefer higher-ITE customers in the most cost-efficient tier.
+    """
+    from scipy.optimize import linprog
+
+    if tiers is None:
+        tiers = TIERS
+
+    n = len(df)
+    k = len(tiers)  # number of tiers
+    ite_values = df["ite"].values
+
+    # Variable layout: x[i*k + t] = allocation weight for customer i, tier t
+    # Total variables: n * k
+
+    # Objective: minimize -sum(ITE_i * mult_t * x[i,t])
+    c = np.array([
+        -ite_values[i] * tiers[t]["ite_multiplier"]
+        for i in range(n)
+        for t in range(k)
+    ])
+
+    # Constraint 1: budget — sum(cost_t * x[i,t]) <= budget
+    costs = np.array([tiers[t]["cost"] for i in range(n) for t in range(k)])
+    A_budget = costs.reshape(1, n * k)
+    b_budget = np.array([budget])
+
+    # Constraint 2: each customer assigned at most 1 tier
+    # sum_t x[i,t] <= 1  for each i  -> n rows, each row has 1s for tier columns of customer i
+    A_mutex = np.zeros((n, n * k))
+    for i in range(n):
+        for t in range(k):
+            A_mutex[i, i * k + t] = 1.0
+
+    A_ub = np.vstack([A_budget, A_mutex])      # (1 + n) x (n*k)
+    b_ub = np.concatenate([b_budget, np.ones(n)])
+
+    bounds = [(0, 1)] * (n * k)
+
+    result = linprog(
+        c,
+        A_ub=A_ub,
+        b_ub=b_ub,
+        bounds=bounds,
+        method="highs",
+    )
+
+    if not result.success:
+        raise RuntimeError(f"Tiered LP did not converge: {result.message}")
+
+    x = result.x.reshape(n, k)
+
+    # Assign each customer their highest-weight tier (argmax over tiers)
+    # If max weight < 0.5, customer is not allocated
+    best_tier_idx = x.argmax(axis=1)          # shape (n,)
+    best_tier_weight = x[np.arange(n), best_tier_idx]
+    allocated_mask = best_tier_weight >= 0.5  # binary threshold
+
+    d = df.copy().reset_index(drop=True)
+    d["allocated"] = allocated_mask.astype(int)
+    d["discount_tier"] = [
+        tiers[best_tier_idx[i]]["name"] if allocated_mask[i] else "none"
+        for i in range(n)
+    ]
+    d["tier_cost"] = [
+        tiers[best_tier_idx[i]]["cost"] if allocated_mask[i] else 0.0
+        for i in range(n)
+    ]
+    d["ite_multiplier"] = [
+        tiers[best_tier_idx[i]]["ite_multiplier"] if allocated_mask[i] else 1.0
+        for i in range(n)
+    ]
+    d["expected_incremental_conversion"] = d["ite"] * d["ite_multiplier"] * d["allocated"]
+
+    # Sort allocated customers by expected conversion descending for a clean ranking
+    alloc_only = d[d["allocated"] == 1].sort_values(
+        "expected_incremental_conversion", ascending=False
+    ).reset_index(drop=True)
+    alloc_only.insert(0, "rank", alloc_only.index + 1)
+
+    n_allocated = int(allocated_mask.sum())
+    total_spend = d.loc[d["allocated"] == 1, "tier_cost"].sum()
+    expected_gain = d["expected_incremental_conversion"].sum()
+
+    summary = {
+        "budget": budget,
+        "customers_targeted": n_allocated,
+        "total_spend": total_spend,
+        "expected_incremental_conversions": expected_gain,
+        "tier_breakdown": {
+            t["name"]: int((d["discount_tier"] == t["name"]).sum())
+            for t in tiers
+        },
+    }
+    return alloc_only, summary
+
+
+# ---------------------------------------------------------------------
+# 11. FULL PIPELINE RUNNER
 # ---------------------------------------------------------------------
 def run_full_pipeline(budget: float = 5000.0):
     print("[1/8] Loading data...")
@@ -255,13 +447,32 @@ def run_full_pipeline(budget: float = 5000.0):
     qini_df = compute_qini_curve(df_with_ite)
     qini_df.to_csv(OUTPUT_DIR / "qini_curve.csv", index=False)
 
-    print("[7/8] Running budget optimization...")
+    print("[7/8] Running budget optimization (greedy + LP comparison)...")
     alloc_df, alloc_summary = optimize_allocation(df_with_ite, budget=budget)
-    print(alloc_summary)
+    _, lp_summary = optimize_allocation_lp(df_with_ite, budget=budget)
+    alloc_tiered_df, tiered_summary = optimize_allocation_tiered(df_with_ite, budget=budget)
+
+    print("\n--- Greedy vs LP Optimizer Comparison ---")
+    print(f"{'Metric':<40} {'Greedy':>15} {'LP (linprog)':>15}")
+    print("-" * 72)
+    for key in ["customers_targeted", "total_spend", "expected_incremental_conversions"]:
+        g_val = alloc_summary[key]
+        l_val = lp_summary[key]
+        match_flag = "✓ match" if abs(g_val - l_val) < 1e-6 else f"Δ {l_val - g_val:+.6f}"
+        print(f"{key:<40} {g_val:>15.4f} {l_val:>15.4f}  ({match_flag})")
+    print()
+
+    print("\n--- Tiered Discount LP Optimizer Summary ($5 / $10 / $20) ---")
+    print(f"  Customers targeted : {tiered_summary['customers_targeted']}")
+    print(f"  Total spend        : ${tiered_summary['total_spend']:.2f}")
+    print(f"  Expected conv. gain: +{tiered_summary['expected_incremental_conversions']:.4f}")
+    print(f"  Tier breakdown     : {tiered_summary['tier_breakdown']}")
+    print()
 
     print("[8/8] Saving outputs...")
     df_with_ite.to_csv(OUTPUT_DIR / "ite_scores.csv", index=False)
     alloc_df.to_csv(OUTPUT_DIR / "allocation_table.csv", index=False)
+    alloc_tiered_df.to_csv(OUTPUT_DIR / "allocation_table_tiered.csv", index=False)
 
     with open(OUTPUT_DIR / "run_summary.txt", "w") as f:
         f.write("=== NAIVE BASELINE ===\n")
@@ -271,8 +482,12 @@ def run_full_pipeline(budget: float = 5000.0):
         f.write("=== REFUTATION TESTS ===\n")
         for k, v in refutations.items():
             f.write(f"--- {k} ---\n{v}\n\n")
-        f.write("=== BUDGET OPTIMIZATION SUMMARY ===\n")
-        f.write(str(alloc_summary) + "\n")
+        f.write("=== BUDGET OPTIMIZATION SUMMARY (GREEDY) ===\n")
+        f.write(str(alloc_summary) + "\n\n")
+        f.write("=== BUDGET OPTIMIZATION SUMMARY (LP linprog) ===\n")
+        f.write(str(lp_summary) + "\n\n")
+        f.write("=== BUDGET OPTIMIZATION SUMMARY (TIERED) ===\n")
+        f.write(str(tiered_summary) + "\n")
 
     print("Done. Outputs saved to:", OUTPUT_DIR)
     return {
@@ -280,6 +495,8 @@ def run_full_pipeline(budget: float = 5000.0):
         "dowhy_estimate": dowhy_estimate.value,
         "refutations": refutations,
         "alloc_summary": alloc_summary,
+        "lp_summary": lp_summary,
+        "tiered_summary": tiered_summary,
     }
 
 
