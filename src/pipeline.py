@@ -23,6 +23,9 @@ DATA_PATH = Path(__file__).parent.parent / "data" / "hillstrom.csv"
 OUTPUT_DIR = Path(__file__).parent.parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+FRONTEND_DATA_DIR = Path(__file__).parent.parent / "frontend" / "public" / "data"
+FRONTEND_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 RANDOM_STATE = 42
 
 
@@ -341,19 +344,20 @@ def optimize_allocation_tiered(
         for t in range(k)
     ])
 
+    from scipy.sparse import csr_matrix, vstack as sp_vstack
+
     # Constraint 1: budget — sum(cost_t * x[i,t]) <= budget
     costs = np.array([tiers[t]["cost"] for i in range(n) for t in range(k)])
-    A_budget = costs.reshape(1, n * k)
+    A_budget = csr_matrix(costs.reshape(1, n * k))
     b_budget = np.array([budget])
 
-    # Constraint 2: each customer assigned at most 1 tier
-    # sum_t x[i,t] <= 1  for each i  -> n rows, each row has 1s for tier columns of customer i
-    A_mutex = np.zeros((n, n * k))
-    for i in range(n):
-        for t in range(k):
-            A_mutex[i, i * k + t] = 1.0
+    # Constraint 2: each customer assigned at most 1 tier (sparse matrix: 192k entries vs 12.28B entries)
+    row_ind = np.repeat(np.arange(n), k)
+    col_ind = np.arange(n * k)
+    data = np.ones(n * k)
+    A_mutex = csr_matrix((data, (row_ind, col_ind)), shape=(n, n * k))
 
-    A_ub = np.vstack([A_budget, A_mutex])      # (1 + n) x (n*k)
+    A_ub = sp_vstack([A_budget, A_mutex])      # (1 + n) x (n*k) sparse matrix
     b_ub = np.concatenate([b_budget, np.ones(n)])
 
     bounds = [(0, 1)] * (n * k)
@@ -473,6 +477,10 @@ def run_full_pipeline(budget: float = 5000.0):
     df_with_ite.to_csv(OUTPUT_DIR / "ite_scores.csv", index=False)
     alloc_df.to_csv(OUTPUT_DIR / "allocation_table.csv", index=False)
     alloc_tiered_df.to_csv(OUTPUT_DIR / "allocation_table_tiered.csv", index=False)
+
+    df_with_ite.to_csv(FRONTEND_DATA_DIR / "ite_scores.csv", index=False)
+    alloc_df.to_csv(FRONTEND_DATA_DIR / "allocation_table.csv", index=False)
+    alloc_tiered_df.to_csv(FRONTEND_DATA_DIR / "allocation_table_tiered.csv", index=False)
 
     with open(OUTPUT_DIR / "run_summary.txt", "w") as f:
         f.write("=== NAIVE BASELINE ===\n")

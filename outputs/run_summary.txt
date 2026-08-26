@@ -2,29 +2,35 @@
 {'conversion_rate_treated': np.float64(0.010680657703658593), 'conversion_rate_control': np.float64(0.005726086548390125), 'naive_effect_estimate': np.float64(0.004954571155268468)}
 
 === DOWHY BACKDOOR ESTIMATE ===
-0.0049398574387988685
+0.004939857438798871
 
 === REFUTATION TESTS ===
 --- random_common_cause ---
 Refute: Add a random common cause
-Estimated effect:0.0049398574387988685
-New effect:0.004939590149226725
-p value:0.86
+Estimated effect:0.004939857438798871
+New effect:0.004939414179285948
+p value:0.78
 
 
 --- placebo_treatment ---
 Refute: Use a Placebo Treatment
-Estimated effect:0.0049398574387988685
-New effect:-1.641133902612545e-05
-p value:0.9199999999999999
+Estimated effect:0.004939857438798871
+New effect:2.9964400985974927e-05
+p value:0.98
 
 
 --- data_subset ---
 Refute: Use a subset of data
-Estimated effect:0.0049398574387988685
-New effect:0.005006081041055701
-p value:0.8400000000000001
+Estimated effect:0.004939857438798871
+New effect:0.004955797192398205
+p value:0.9
 
 
-=== BUDGET OPTIMIZATION SUMMARY ===
+=== BUDGET OPTIMIZATION SUMMARY (GREEDY) ===
 {'budget': 5000.0, 'customers_targeted': 500, 'total_spend': np.float64(5000.0), 'expected_incremental_conversions': 7.275836609143397}
+
+=== BUDGET OPTIMIZATION SUMMARY (LP linprog) ===
+{'budget': 5000.0, 'customers_targeted': 500, 'total_spend': np.float64(5000.0), 'expected_incremental_conversions': 7.275836609143399}
+
+=== BUDGET OPTIMIZATION SUMMARY (TIERED) ===
+{'budget': 5000.0, 'customers_targeted': 1000, 'total_spend': np.float64(5000.0), 'expected_incremental_conversions': 13.968833047539352, 'tier_breakdown': {'low': 1000, 'medium': 0, 'high': 0}}
